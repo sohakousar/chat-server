@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # Helper service to generate self-signed SSL certificates for PostgreSQL
+  ssl-generator:
+    image: alpine:latest
+    container_name: ssl-generator
+    volumes:
+      - ssl-certs:/certs
+    command: >
+      sh -c " apk add --no-cache openssl && if [ ! -f /certs/server.key ]; then
+        openssl req -new -x509 -days 365 -nodes -text \
+          -out /certs/server.crt \
+          -keyout /certs/server.key \
+          -subj '/CN=postgres' &&
+        chmod 600 /certs/server.key &&
+        chown 70:70 /certs/server.key /certs/server.crt
+      fi "
+
+  # PostgreSQL Database Service
+  postgres:
+    image: postgres:15-alpine
+    container_name: chat-db
+    depends_on:
+      ssl-generator:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_DB: chatdb
+      POSTGRES_USER: chatuser
+      POSTGRES_PASSWORD: chatpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ssl-certs:/certs
+      - ./db-init:/docker-entrypoint-initdb.d
+    command: >
+      postgres -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U chatuser -d chatdb" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Java Chat Server Backend Service
+  chat-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chat-server-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8887:8887"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: chatdb
+      DB_USER: chatuser
+      DB_PASSWORD: chatpassword
+
+  # Nginx Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: chat-server-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - chat-server
+
+volumes:
+  pgdata:
+  ssl-certs:
