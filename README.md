@@ -1,8 +1,10 @@
-# Real-Time Chat Application
+# Signal Room — Real-Time Chat Application
 
 A production-style, multi-threaded real-time chat application featuring a Java WebSocket backend, PostgreSQL persistence, Google OAuth authentication, and a custom-designed dark-themed frontend.
 
-Live demo: _add your Render URL here once deployed_
+Live demo: [https://chat-server-frontend.onrender.com](https://chat-server-frontend.onrender.com)
+
+> **Note:** This is hosted on Render's free tier, which spins down after 15 minutes of inactivity. The first visit after idle time may take 30-60 seconds to load while the backend wakes up — subsequent visits will be fast.
 
 ---
 
