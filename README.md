@@ -1,55 +1,102 @@
-# Real-time WebSocket Chat Application
+# Real-Time Chat Application
 
-A high-polish, multi-threaded real-time chat application featuring a Java backend running on native WebSockets and a modern dark-themed Discord-style web frontend.
+A production-style, multi-threaded real-time chat application featuring a Java WebSocket backend, PostgreSQL persistence, Google OAuth authentication, and a custom-designed dark-themed frontend.
+
+Live demo: _add your Render URL here once deployed_
+
+---
 
 ## Features
-- **Native WebSocket Server**: Binds to port `8887`. Spawns threads per client connection dynamically under the hood.
-- **Dynamic Client Registry**: Thread-safe active user management tracking unique connections.
-- **Robust Validation**: Enforces alphanumeric usernames (max 20 chars) and caps message logs (max 500 chars).
-- **Identity Spoofing Protection**: Enforces message header authenticity on the backend.
-- **Modern Dark UI**: Discord-inspired aesthetic, rounded conversation bubbles, live sidebar of online users, and mobile hamburger navigation.
-- **Cross-site Scripting (XSS) Sanitization**: Cleanses client message payloads.
-- **Terminal Client**: A CLI-based client (`ChatClient`) for terminal testing.
+
+- **Real-time messaging** over native WebSockets — multi-threaded Java backend using [Java-WebSocket](https://github.com/TooTallNate/Java-WebSocket)
+- **Google Sign-In authentication** — no passwords stored; identity verified server-side via Google ID token verification
+- **Multiple chat rooms** — general, random, tech-talk, gaming (room-isolated messages and history)
+- **Persistent chat history** — PostgreSQL via HikariCP connection pooling; messages and reactions survive server restarts
+- **Message reactions** — emoji reactions with live updates across all connected clients
+- **Message editing & deletion** — soft-delete with "This message was deleted" placeholder, edited messages flagged
+- **Typing indicators** — live "X is typing..." status per room
+- **Message rate limiting** — prevents spam (max 5 messages per 10-second rolling window per user)
+- **Admin controls** — a designated admin account can kick users from a room
+- **Profile pictures** — pulled directly from each user's Google account
+- **Auto-reconnect** — exponential backoff reconnection with automatic re-authentication and room rejoin on network drops
+- **XSS sanitization** — all client message payloads are sanitized before rendering
+- **Structured logging** — SLF4J throughout, with defensive error handling so a single bad message can't crash a connection thread
+- **Dockerized backend** — multi-stage build producing a lean runtime image
+- **Full-stack Docker Compose setup** — spins up PostgreSQL (with SSL), the Java backend, and an Nginx-served frontend in one command
+- **Terminal client** — a CLI-based client (`ChatClient`) for backend testing without a browser
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Java 17, Java-WebSocket, HikariCP |
+| Database | PostgreSQL |
+| Auth | Google Identity Services + Google API Client (server-side token verification) |
+| Frontend | Vanilla HTML/CSS/JS, Google Identity Services JS |
+| Build | Maven (shaded/uber jar via maven-shade-plugin) |
+| Container | Docker (multi-stage: Maven build → Eclipse Temurin JRE Alpine runtime), Docker Compose, Nginx |
+| Logging | SLF4J |
 
 ---
 
 ## Project Structure
+
 ```
 chat-server/
 ├── src/
 │   ├── server/
-│   │   ├── ChatServer.java        // Extends WebSocketServer, main entry point (Port 8887)
-│   │   ├── ClientHandler.java     // Wraps socket logic, handles validation and events
-│   │   └── ClientRegistry.java    // Thread-safe repository of online connections
+│   │   ├── ChatServer.java        # Main entry point — WebSocket server, message routing
+│   │   ├── ClientHandler.java     # Per-connection auth/session logic
+│   │   ├── ClientRegistry.java    # Thread-safe room + connection tracking, broadcasting
+│   │   ├── DatabaseManager.java   # HikariCP pool, message/reaction persistence, schema setup
+│   │   └── GoogleAuthVerifier.java# Google ID token verification
 │   ├── client/
-│   │   └── ChatClient.java        // Command-line WebSocket client for quick testing
+│   │   └── ChatClient.java        # CLI WebSocket client for backend testing
 │   └── common/
-│       └── Message.java           // Data model representing message packets (JSON serialized)
+│       └── Message.java           # Shared message model (JSON serialization)
 ├── frontend/
-│   ├── index.html                 // Layout markup
-│   ├── style.css                  // Dark theme stylesheet
-│   └── app.js                     // Browser WebSocket handler
-├── pom.xml                        // Maven packaging & dependencies
-└── README.md                      // Setup documentation
+│   ├── index.html                 # App shell — login, room selector, chat screens
+│   ├── style.css                  # Dark theme styling
+│   ├── app.js                     # WebSocket client logic, UI rendering, Google Sign-In
+│   └── Dockerfile                 # Nginx container for serving the static frontend
+├── db-init/
+│   └── init.sql                   # Database schema reference (used by Docker Compose)
+├── Dockerfile                     # Backend multi-stage build
+├── docker-compose.yml             # Full stack: Postgres + backend + Nginx frontend
+├── .dockerignore
+├── .gitignore
+├── pom.xml
+└── README.md
 ```
 
 ---
 
-## Getting Started
+## Prerequisites
 
-### Database Configuration
+- **Java 17+** (JDK)
+- **Apache Maven 3.9+** (optional if building manually)
+- **A PostgreSQL database** (any standard instance; SSL-capable recommended)
+- **A Google Cloud OAuth 2.0 Client ID** ([console.cloud.google.com](https://console.cloud.google.com)) with your local and production URLs registered under Authorized JavaScript origins
+- **Docker** and **Docker Compose** (optional, for containerized runs)
+- **Python 3** (optional — only needed if serving the frontend manually outside Docker)
 
-The application persists messages to a PostgreSQL database. Before starting the server, you must configure the connection using the following environment variables:
+---
 
-- `DB_HOST`: The database server host (e.g. `localhost` or a remote connection endpoint)
-- `DB_PORT`: The database server port (e.g. `5432`)
-- `DB_NAME`: The database name (e.g. `postgres`)
-- `DB_USER`: The database user (e.g. `postgres`)
-- `DB_PASSWORD`: The password for the database user
+## Database Configuration
 
-#### Setting Environment Variables
+The backend reads all database configuration from environment variables — nothing is hardcoded in source.
 
-##### Windows (PowerShell)
+| Variable | Description | Example |
+|---|---|---|
+| `DB_HOST` | Database server host | `localhost` or a remote connection endpoint |
+| `DB_PORT` | Database server port | `5432` |
+| `DB_NAME` | Database name | `postgres` |
+| `DB_USER` | Database user | `postgres` |
+| `DB_PASSWORD` | Database password | *(your database password)* |
+
+**Windows (PowerShell)**
 ```powershell
 $env:DB_HOST="your-db-host"
 $env:DB_PORT="5432"
@@ -58,7 +105,7 @@ $env:DB_USER="your-db-user"
 $env:DB_PASSWORD="your-db-password"
 ```
 
-##### Linux / macOS (Bash)
+**Linux / macOS (Bash)**
 ```bash
 export DB_HOST="your-db-host"
 export DB_PORT="5432"
@@ -67,112 +114,132 @@ export DB_USER="your-db-user"
 export DB_PASSWORD="your-db-password"
 ```
 
-### Prerequisites
-- **Java SE Development Kit (JDK) 17** or newer.
-- **Apache Maven** (optional, recommended for packaging).
-- **PostgreSQL Instance** (accessible with `sslmode=require`).
+### Google OAuth Client ID
+
+Update the `client_id` value in `frontend/app.js` (inside the `google.accounts.id.initialize(...)` call) with your own Google Cloud OAuth Client ID.
 
 ---
 
-### Method A: Build and Run with Maven (Recommended)
+## Running the Application
 
-1. **Build and Package**:
-   Navigate to the `chat-server` root directory containing `pom.xml` and package the project:
-   ```bash
-   cd chat-server
-   mvn clean package
-   ```
-   This will download dependencies and generate a single runnable executable jar file named `chat-server.jar` under the `target/` directory.
+### Method A: Build and Run with Maven (Recommended for development)
 
-2. **Start the Chat Server**:
-   ```bash
-   java -jar target/chat-server.jar
-   ```
-   You should see `Server running` printed in your terminal.
+```bash
+cd chat-server
+mvn clean package
+java -jar target/chat-server.jar
+```
 
-3. **Start the Command-line Chat Client (Optional)**:
-   In a separate console tab, run the interactive client class:
-   ```bash
-   java -cp target/chat-server.jar client.ChatClient
-   ```
+You should see `Server running` printed in your terminal. The server listens on port **8887**.
+
+Optionally, start the CLI test client in a separate terminal:
+```bash
+java -cp target/chat-server.jar client.ChatClient
+```
+
+Then serve the frontend separately:
+```bash
+cd frontend
+python -m http.server 8000
+```
+Open **http://localhost:8000** in your browser.
 
 ---
 
 ### Method B: Manual Compile (Without Maven in PATH)
 
-If Maven is not globally configured in your system command PATH, you can build manually by placing the dependency JAR files inside a `lib` directory:
+Download the dependency JARs (`Java-WebSocket-1.5.4.jar`, `json-20240303.jar`, and others listed in `pom.xml`) into a `chat-server/lib/` folder, then:
 
-1. **Download Dependency JARs**:
-   - [Java-WebSocket-1.5.4.jar](https://repo1.maven.org/maven2/org/java-websocket/Java-WebSocket/1.5.4/Java-WebSocket-1.5.4.jar)
-   - [json-20240303.jar](https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar)
-   Place them inside a new folder named `chat-server/lib/`.
-
-2. **Compile manually**:
-   ```bash
-   cd chat-server
-   mkdir classes
-   javac -d classes -cp "lib/*" src/common/Message.java src/server/ClientRegistry.java src/server/ClientHandler.java src/server/ChatServer.java src/client/ChatClient.java
-   ```
-
-3. **Run Server manually**:
-   ```bash
-   java -cp "classes;lib/*" server.ChatServer
-   ```
-
-4. **Run CLI Client manually**:
-   ```bash
-   java -cp "classes;lib/*" client.ChatClient
-   ```
+```bash
+cd chat-server
+mkdir classes
+javac -d classes -cp "lib/*" src/common/Message.java src/server/ClientRegistry.java src/server/ClientHandler.java src/server/ChatServer.java src/client/ChatClient.java
+java -cp "classes;lib/*" server.ChatServer
+```
 
 ---
 
-### Method C: Build and Run with Docker
+### Method C: Build and Run with Docker (backend only)
 
-You can build and run the chat server inside a Docker container using the provided multi-stage `Dockerfile`.
+```bash
+cd chat-server
+docker build -t chat-server .
+docker run -p 8887:8887 \
+  -e DB_HOST=<host> -e DB_PORT=<port> -e DB_NAME=<name> \
+  -e DB_USER=<user> -e DB_PASSWORD=<password> \
+  chat-server
+```
 
-1. **Build the Docker Image**:
-   Navigate to the `chat-server` root directory and build the image:
-   ```bash
-   docker build -t chat-server .
-   ```
-
-2. **Run the Docker Container**:
-   Pass the required PostgreSQL database configuration environment variables at runtime:
-   ```bash
-   docker run -p 8887:8887 -e DB_HOST=<host> -e DB_PORT=<port> -e DB_NAME=<name> -e DB_USER=<user> -e DB_PASSWORD=<password> chat-server
-   ```
+Serve `frontend/` separately (static hosting, Nginx, or the included `frontend/Dockerfile`).
 
 ---
 
-### Method D: Run the Entire Stack with Docker Compose (Highly Recommended)
+### Method D: Run the Entire Stack with Docker Compose (Recommended for a full local environment)
 
-You can run the entire application stack (PostgreSQL Database with SSL enabled, the Chat Server backend, and the Nginx Frontend) in one command using Docker Compose:
+Spin up PostgreSQL (with SSL enabled), the Java backend, and the Nginx-served frontend together:
 
-1. **Start the Stack**:
-   Navigate to the `chat-server` root directory and run:
-   ```bash
-   docker compose up --build -d
-   ```
-   This will:
-   - Generate self-signed SSL certificates for PostgreSQL automatically.
-   - Start the PostgreSQL database and initialize the tables.
-   - Compile and package the Java backend server.
-   - Start the Nginx static server to serve the frontend on port `8080`.
+```bash
+docker compose up --build -d
+```
 
-2. **Access the Application**:
-   Open your browser and navigate to [http://localhost:8080](http://localhost:8080) to access the chat application interface.
+This will:
+- Generate self-signed SSL certificates for PostgreSQL automatically
+- Start PostgreSQL and initialize the schema from `db-init/init.sql`
+- Compile and package the Java backend
+- Serve the frontend via Nginx on port **8080**
 
-3. **Stop the Stack**:
-   ```bash
-   docker compose down -v
-   ```
+Open **http://localhost:8080** to use the app.
+
+Stop the stack:
+```bash
+docker compose down -v
+```
 
 ---
 
-## Opening the Web Interface
+## Using the App
 
-1. Launch your browser.
-2. Open the file `chat-server/frontend/index.html` directly (double-click the file or drag it into your browser tab).
-3. Alternatively, host the `frontend/` folder using any static web server (e.g. `python -m http.server 8000` or VS Code's Live Server plugin).
-4. Enter a username (e.g. `Alice`, `Bob`, `Coder12`) to join the room!
-5. Open `index.html` in multiple tabs to test real-time chat sync!
+1. Open the frontend in your browser
+2. Sign in with your Google account
+3. Choose a room (general, random, tech-talk, gaming)
+4. Chat in real time — messages, reactions, typing indicators, and edits sync live across everyone in the room
+5. Open the app in multiple tabs/browsers to test real-time sync
+
+---
+
+## Admin Access
+
+A designated admin account has permission to kick users from a room. Set your own admin email in the `ADMIN_EMAIL` constant in `ChatServer.java` before deploying.
+
+---
+
+## Deployment
+
+This project deploys cleanly on platforms like [Render](https://render.com) or [Railway](https://railway.app), which:
+
+- Build directly from the included `Dockerfile`
+- Provide automatic TLS — your WebSocket connection upgrades from `ws://` to `wss://` with no extra setup
+- Let you configure the environment variables above via their dashboard
+
+After deploying, update `SERVER_URL` in `frontend/app.js` from `ws://localhost:8887` to your live `wss://your-app.onrender.com` URL, and add your production domain to the Google OAuth Client's Authorized JavaScript origins.
+
+---
+
+## Known Limitations
+
+- Single-instance only — no horizontal scaling yet (would need Redis Pub/Sub for multi-instance message broadcasting)
+- Room list is currently hardcoded rather than user-created
+- No automated test suite yet
+- No file/image sharing support
+
+---
+
+## Author
+
+**Syeda Soha Kousar**
+- GitHub: [github.com/sohakousar](https://github.com/sohakousar/)
+- LinkedIn: [linkedin.com/in/syeda-soha-kousar](https://www.linkedin.com/in/syeda-soha-kousar/)
+
+## License
+
+This project was built as a personal learning/portfolio project. No license restrictions specified — adapt freely.
