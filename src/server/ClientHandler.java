@@ -19,6 +19,19 @@ public class ClientHandler {
     private boolean authenticated = false;
     private String displayName = null;
     private String currentRoom = null;
+    private boolean kicked = false;
+
+    public String getDisplayName() {
+        return displayName != null ? displayName : username;
+    }
+
+    public boolean isKicked() {
+        return kicked;
+    }
+
+    public void setKicked(boolean kicked) {
+        this.kicked = kicked;
+    }
 
     public ClientHandler(WebSocket conn, ClientRegistry registry, DatabaseManager dbManager, GoogleAuthVerifier googleAuthVerifier) {
         this.conn = conn;
@@ -51,6 +64,16 @@ public class ClientHandler {
                     handleLeaveRoom();
                 } else if (message.getType() == Message.Type.CHAT) {
                     handleChat(message.getText());
+                } else if (message.getType() == Message.Type.ADD_REACTION) {
+                    handleAddReaction(message.getMessageId(), message.getEmoji());
+                } else if (message.getType() == Message.Type.REMOVE_REACTION) {
+                    handleRemoveReaction(message.getMessageId(), message.getEmoji());
+                } else if (message.getType() == Message.Type.EDIT_MESSAGE) {
+                    handleEditMessage(message.getMessageId(), message.getText());
+                } else if (message.getType() == Message.Type.DELETE_MESSAGE) {
+                    handleDeleteMessage(message.getMessageId());
+                } else if (message.getType() == Message.Type.KICK_USER) {
+                    handleKickUser(message.getTargetEmail());
                 } else {
                     sendSystemError("Invalid action type.");
                 }
@@ -87,8 +110,10 @@ public class ClientHandler {
             this.displayName = displayName;
             logger.info("User '{}' ({}) successfully authenticated via Google.", email, displayName);
 
-            // Send AUTH_SUCCESS message back with username as text field
+            // Send AUTH_SUCCESS message back with username as text field, and email in token field
             Message successMsg = new Message("System", displayName, Instant.now().toString(), Message.Type.AUTH_SUCCESS);
+            successMsg.setToken(email);
+            successMsg.setIsAdmin(email.equalsIgnoreCase(ChatServer.ADMIN_EMAIL));
             conn.send(successMsg.toJson());
 
             // Send ROOM_LIST message to the client right after AUTH_SUCCESS
@@ -159,7 +184,7 @@ public class ClientHandler {
         registry.leaveRoom(conn);
 
         // Broadcast LEAVE message with updated user list to that room
-        String text = this.displayName + " left the room";
+        String text = this.kicked ? (this.displayName + " was removed by an admin.") : (this.displayName + " left the room");
         Message leaveBroadcast = new Message(
                 "System",
                 text,
@@ -187,13 +212,20 @@ public class ClientHandler {
             return;
         }
 
+        // Rate limit check
+        if (registry.checkRateLimit(conn)) {
+            logger.warn("Rate limit exceeded for user: " + this.username);
+            sendRateLimitError("You're sending messages too quickly. Please slow down.");
+            return;
+        }
+
         // Enforce 500-character limit (truncate to 500 characters)
         if (cleanText.length() > 500) {
             cleanText = cleanText.substring(0, 500);
         }
 
-        // Save the chat message to database
-        dbManager.saveMessage(this.username, cleanText, this.currentRoom);
+        // Save the chat message to database and get ID
+        int msgId = dbManager.saveMessage(this.username, cleanText, this.currentRoom);
 
         // Construct broadcast message. Use display name so it matches the client side myUsername setting
         String senderName = this.displayName != null ? this.displayName : this.username;
@@ -203,6 +235,7 @@ public class ClientHandler {
                 Instant.now().toString(),
                 Message.Type.CHAT
         );
+        chatBroadcast.setId(msgId);
         chatBroadcast.setRoom(this.currentRoom);
         registry.broadcastToRoom(this.currentRoom, chatBroadcast);
     }
@@ -240,6 +273,188 @@ public class ClientHandler {
             }
         } catch (Exception e) {
             logger.error("Failed to send error notification: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Sends a RATE_LIMITED error notification from "System" directly to this specific socket connection.
+     */
+    private void sendRateLimitError(String reason) {
+        try {
+            if (conn.isOpen()) {
+                Message rateLimitMsg = new Message(
+                        "System",
+                        reason,
+                        Instant.now().toString(),
+                        Message.Type.RATE_LIMITED
+                );
+                conn.send(rateLimitMsg.toJson());
+            }
+        } catch (Exception e) {
+            logger.error("Failed to send rate limit notification: " + e.getMessage(), e);
+        }
+    }
+
+    private void handleAddReaction(int messageId, String emoji) {
+        if (messageId <= 0 || emoji == null || emoji.trim().isEmpty() || this.currentRoom == null) {
+            return;
+        }
+
+        dbManager.addReaction(messageId, this.username, emoji.trim());
+
+        Message updateMsg = new Message(
+                "System",
+                "",
+                Instant.now().toString(),
+                Message.Type.REACTION_UPDATE
+        );
+        updateMsg.setMessageId(messageId);
+        updateMsg.setEmoji(emoji.trim());
+        updateMsg.setUsername(this.username);
+        updateMsg.setAction("added");
+        updateMsg.setRoom(this.currentRoom);
+
+        registry.broadcastToRoom(this.currentRoom, updateMsg);
+    }
+
+    private void handleRemoveReaction(int messageId, String emoji) {
+        if (messageId <= 0 || emoji == null || emoji.trim().isEmpty() || this.currentRoom == null) {
+            return;
+        }
+
+        dbManager.removeReaction(messageId, this.username, emoji.trim());
+
+        Message updateMsg = new Message(
+                "System",
+                "",
+                Instant.now().toString(),
+                Message.Type.REACTION_UPDATE
+        );
+        updateMsg.setMessageId(messageId);
+        updateMsg.setEmoji(emoji.trim());
+        updateMsg.setUsername(this.username);
+        updateMsg.setAction("removed");
+        updateMsg.setRoom(this.currentRoom);
+
+        registry.broadcastToRoom(this.currentRoom, updateMsg);
+    }
+
+    private void handleEditMessage(int messageId, String newText) {
+        logger.info("Received EDIT_MESSAGE for messageId: " + messageId);
+        if (messageId <= 0 || newText == null || this.currentRoom == null) {
+            return;
+        }
+        String cleanText = newText.trim();
+        if (cleanText.isEmpty()) {
+            return;
+        }
+        if (cleanText.length() > 500) {
+            cleanText = cleanText.substring(0, 500);
+        }
+
+        // Verify ownership
+        String owner = dbManager.getMessageOwner(messageId);
+        logger.info("Ownership check: message owner = " + owner + ", requester = " + this.username);
+        if (owner == null || !owner.equalsIgnoreCase(this.username)) {
+            sendSystemError("You are not authorized to edit this message.");
+            return;
+        }
+
+        // Update database
+        boolean updated = dbManager.updateMessage(messageId, cleanText);
+        if (updated) {
+            logger.info("Broadcasting MESSAGE_EDITED for messageId: " + messageId);
+            // Broadcast MESSAGE_EDITED to room
+            Message broadcast = new Message(
+                    this.displayName != null ? this.displayName : this.username,
+                    cleanText,
+                    Instant.now().toString(),
+                    Message.Type.MESSAGE_EDITED
+            );
+            broadcast.setMessageId(messageId);
+            broadcast.setEditedAt(Instant.now().toString());
+            broadcast.setRoom(this.currentRoom);
+            registry.broadcastToRoom(this.currentRoom, broadcast);
+        }
+    }
+
+    private void handleDeleteMessage(int messageId) {
+        logger.info("Received DELETE_MESSAGE for messageId: " + messageId);
+        if (messageId <= 0 || this.currentRoom == null) {
+            return;
+        }
+
+        // Verify ownership
+        String owner = dbManager.getMessageOwner(messageId);
+        logger.info("Ownership check: message owner = " + owner + ", requester = " + this.username);
+        if (owner == null || !owner.equalsIgnoreCase(this.username)) {
+            sendSystemError("You are not authorized to delete this message.");
+            return;
+        }
+
+        // Delete in database
+        boolean deleted = dbManager.deleteMessage(messageId);
+        if (deleted) {
+            logger.info("Broadcasting MESSAGE_DELETED for messageId: " + messageId);
+            // Broadcast MESSAGE_DELETED to room
+            Message broadcast = new Message(
+                    "System",
+                    "",
+                    Instant.now().toString(),
+                    Message.Type.MESSAGE_DELETED
+            );
+            broadcast.setMessageId(messageId);
+            broadcast.setRoom(this.currentRoom);
+            registry.broadcastToRoom(this.currentRoom, broadcast);
+        }
+    }
+
+    private void handleKickUser(String targetEmail) {
+        logger.info("Received KICK_USER for targetEmail: " + targetEmail + " from requester: " + this.username);
+        if (targetEmail == null || this.currentRoom == null) {
+            return;
+        }
+
+        // Verify requester is admin
+        if (!this.username.equalsIgnoreCase(ChatServer.ADMIN_EMAIL)) {
+            logger.warn("Unauthorized kick attempt by user: " + this.username);
+            sendSystemError("Unauthorized: Only admins can kick users.");
+            return;
+        }
+
+        // Find target connection in the room
+        WebSocket targetConn = registry.getConnectionByEmailInRoom(this.currentRoom, targetEmail);
+        if (targetConn == null) {
+            logger.warn("Kick target user not found in room: " + targetEmail);
+            sendSystemError("User " + targetEmail + " not found in the room.");
+            return;
+        }
+
+        // Mark target handler as kicked
+        ClientHandler targetHandler = targetConn.getAttachment();
+        if (targetHandler != null) {
+            targetHandler.setKicked(true);
+        }
+
+        // Send KICKED message to target
+        Message kickedMsg = new Message(
+                "System",
+                "You have been removed from the room by an admin.",
+                Instant.now().toString(),
+                Message.Type.KICKED
+        );
+        try {
+            targetConn.send(kickedMsg.toJson());
+        } catch (Exception e) {
+            logger.error("Failed to send KICKED notification to " + targetEmail, e);
+        }
+
+        // Close target connection
+        try {
+            targetConn.close();
+            logger.info("Closed kicked user connection: " + targetEmail);
+        } catch (Exception e) {
+            logger.error("Failed to close kicked user connection: " + targetEmail, e);
         }
     }
 

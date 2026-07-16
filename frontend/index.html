@@ -5,11 +5,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="A real-time high-fidelity dark mode chat application.">
-    <title>Sleek Chat Room</title>
-    <!-- Google Fonts: Inter -->
+    <title>Signal Room</title>
+    <!-- Google Fonts: Inter, Space Grotesk, JetBrains Mono -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <!-- Google Identity Services -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -25,11 +27,24 @@
         </div>
     </div>
 
+    <!-- Rate Limit Warning Banner -->
+    <div id="rate-limit-banner" class="rate-limit-banner hidden">
+        <span id="rate-limit-text">You're sending messages too quickly. Please slow down.</span>
+    </div>
+
     <!-- Google Authentication Overlay -->
     <div id="login-overlay" class="overlay">
         <div class="login-card">
             <div class="logo-area">
-                <span class="chat-icon">💬</span>
+                <div class="chat-icon-container">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none"
+                        stroke="var(--primary-accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                        class="lucide lucide-radio-receiver">
+                        <rect width="20" height="8" x="2" y="12" rx="2" />
+                        <path d="M12 12V4h.01" />
+                        <path d="M17 12a1 1 0 0 1-1-1v-2a4 4 0 0 0-8 0v2a1 1 0 0 1-1 1" />
+                    </svg>
+                </div>
                 <h2>Join the Space</h2>
                 <p>Sign in with your Google Account to enter the room</p>
             </div>
@@ -46,7 +61,16 @@
     <div id="room-overlay" class="overlay hidden">
         <div class="login-card">
             <div class="logo-area">
-                <span class="chat-icon">🚪</span>
+                <div class="chat-icon-container">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none"
+                        stroke="var(--primary-accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                        class="lucide lucide-door-open">
+                        <path d="M13 4h3a2 2 0 0 1 2 2v14H6V6a2 2 0 0 1 2-2h3" />
+                        <path d="M2 20h20" />
+                        <path d="M13 10h.01" />
+                        <path d="M13 4v16" />
+                    </svg>
+                </div>
                 <h2>Select a Room</h2>
                 <p>Choose a channel to join the conversation</p>
             </div>
@@ -82,19 +106,22 @@
                 </div>
                 <div class="sidebar-actions" style="display: flex; gap: 0.25rem;">
                     <button id="switch-room-btn" title="Switch Room">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="15 3 21 3 21 9"></polyline>
-                            <polyline points="9 21 3 21 3 15"></polyline>
-                            <line x1="21" y1="3" x2="14" y2="10"></line>
-                            <line x1="3" y1="21" x2="10" y2="14"></line>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="lucide lucide-door-open">
+                            <path d="M13 4h3a2 2 0 0 1 2 2v14H6V6a2 2 0 0 1 2-2h3" />
+                            <path d="M2 20h20" />
+                            <path d="M13 10h.01" />
+                            <path d="M13 4v16" />
                         </svg>
                     </button>
                     <button id="logout-btn" title="Leave Chat">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path
-                                d="M9 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H9M16 17L21 12M21 12L16 7M21 12H9"
-                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="lucide lucide-log-out">
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                            <polyline points="16 17 21 12 16 7" />
+                            <line x1="21" x2="9" y1="12" y2="12" />
                         </svg>
                     </button>
                 </div>
@@ -106,11 +133,11 @@
             <!-- Chat Header -->
             <header class="chat-header">
                 <button id="sidebar-toggle" class="sidebar-toggle-btn" aria-label="Toggle Online List">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="3" y1="12" x2="21" y2="12"></line>
-                        <line x1="3" y1="6" x2="21" y2="6"></line>
-                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        class="lucide lucide-panel-left">
+                        <rect width="18" height="18" x="3" y="3" rx="2" />
+                        <path d="M9 3v18" />
                     </svg>
                 </button>
                 <div class="channel-info">
@@ -124,7 +151,17 @@
             <!-- Chat Message Logs -->
             <section class="messages-viewport" id="chat-messages">
                 <div class="welcome-box">
-                    <div class="welcome-icon">👋</div>
+                    <div class="welcome-icon-container">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none"
+                            stroke="var(--primary-accent)" stroke-width="1.5" stroke-linecap="round"
+                            stroke-linejoin="round" class="lucide lucide-radio">
+                            <circle cx="12" cy="12" r="2" />
+                            <path d="M16.2 7.8a6 6 0 0 1 0 8.5" />
+                            <path d="M7.8 7.8a6 6 0 0 1 0 8.5" />
+                            <path d="M19 5a10 10 0 0 1 0 14" />
+                            <path d="M5 5a10 10 0 0 1 0 14" />
+                        </svg>
+                    </div>
                     <h2>Welcome to the Chatroom!</h2>
                     <p>This is the start of the general-chat room. Enjoy your conversations in real time.</p>
                 </div>
@@ -140,10 +177,11 @@
                         <div class="input-actions">
                             <span id="char-counter" class="char-count">0/500</span>
                             <button type="submit" id="chat-send-btn" disabled>
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                                    xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" stroke="currentColor"
-                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="lucide lucide-send">
+                                    <path d="m22 2-7 20-4-9-9-4Z" />
+                                    <path d="M22 2 11 13" />
                                 </svg>
                             </button>
                         </div>

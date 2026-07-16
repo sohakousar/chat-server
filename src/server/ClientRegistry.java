@@ -22,6 +22,9 @@ public class ClientRegistry {
     // Maps room names to the set of active WebSocket connections in that room
     private final ConcurrentHashMap<String, java.util.Set<WebSocket>> roomRegistry = new ConcurrentHashMap<>();
 
+    // Maps active WebSocket connections to their message timestamp history
+    private final ConcurrentHashMap<WebSocket, java.util.Deque<Long>> rateLimits = new ConcurrentHashMap<>();
+
     /**
      * Registers a new client connection with the given username.
      * Performs a case-insensitive uniqueness check.
@@ -56,6 +59,7 @@ public class ClientRegistry {
         if (conn == null) {
             return null;
         }
+        rateLimits.remove(conn);
         leaveRoom(conn);
         return connToUsername.remove(conn);
     }
@@ -158,13 +162,31 @@ public class ClientRegistry {
         java.util.Set<WebSocket> conns = roomRegistry.get(room);
         if (conns != null) {
             for (WebSocket conn : conns) {
-                String user = connToUsername.get(conn);
-                if (user != null) {
-                    users.add(user);
+                String email = connToUsername.get(conn);
+                if (email != null) {
+                    ClientHandler handler = conn.getAttachment();
+                    String displayName = (handler != null) ? handler.getDisplayName() : email;
+                    users.add(displayName + "|" + email);
                 }
             }
         }
         return users;
+    }
+
+    public WebSocket getConnectionByEmailInRoom(String room, String email) {
+        if (room == null || email == null) {
+            return null;
+        }
+        java.util.Set<WebSocket> conns = roomRegistry.get(room);
+        if (conns != null) {
+            for (WebSocket conn : conns) {
+                String user = connToUsername.get(conn);
+                if (user != null && user.equalsIgnoreCase(email)) {
+                    return conn;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -193,5 +215,34 @@ public class ClientRegistry {
      */
     public List<String> getOnlineUsers() {
         return new ArrayList<>(connToUsername.values());
+    }
+
+    /**
+     * Checks if a client is sending messages too quickly.
+     * Rule: at most 5 messages within any rolling 10-second window.
+     * Ensures thread safety by synchronizing checks/updates on the client's deque.
+     *
+     * @param conn The WebSocket connection
+     * @return true if the rate limit is exceeded, false otherwise
+     */
+    public boolean checkRateLimit(WebSocket conn) {
+        long now = System.currentTimeMillis();
+        long windowMs = 10000L;
+        int maxMessages = 5;
+
+        java.util.Deque<Long> timestamps = rateLimits.computeIfAbsent(conn, k -> new java.util.concurrent.ConcurrentLinkedDeque<>());
+        synchronized (timestamps) {
+            // Prune timestamps older than 10 seconds
+            while (!timestamps.isEmpty() && timestamps.peekFirst() < now - windowMs) {
+                timestamps.pollFirst();
+            }
+
+            if (timestamps.size() >= maxMessages) {
+                return true;
+            }
+
+            timestamps.addLast(now);
+            return false;
+        }
     }
 }

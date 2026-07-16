@@ -79,14 +79,23 @@ public class DatabaseManager {
                 "password_hash TEXT, " +
                 "created_at TIMESTAMP DEFAULT NOW()" +
                 ")";
+        String createReactionsSql = "CREATE TABLE IF NOT EXISTS message_reactions (" +
+                "message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, " +
+                "username VARCHAR(255) NOT NULL, " +
+                "emoji VARCHAR(50) NOT NULL, " +
+                "PRIMARY KEY (message_id, username, emoji)" +
+                ")";
         String alterUsernameSql = "ALTER TABLE users ALTER COLUMN username TYPE VARCHAR(255)";
         String alterPasswordHashSql = "ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL";
+        String addEditedAtSql = "ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP WITH TIME ZONE";
+        String addDeletedSql = "ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE";
 
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
             stmt.execute(createMessagesSql);
             stmt.execute(createUsersSql);
-            logger.info("[DATABASE] Checked schema. 'messages' and 'users' tables are ready.");
+            stmt.execute(createReactionsSql);
+            logger.info("[DATABASE] Checked schema. 'messages', 'users' and 'message_reactions' tables are ready.");
             try {
                 stmt.execute(alterUsernameSql);
             } catch (SQLException e) {
@@ -97,27 +106,43 @@ public class DatabaseManager {
             } catch (SQLException e) {
                 // Ignore if already altered or not PostgreSQL
             }
+            try {
+                stmt.execute(addEditedAtSql);
+            } catch (SQLException e) {
+                // Ignore if already altered
+            }
+            try {
+                stmt.execute(addDeletedSql);
+            } catch (SQLException e) {
+                // Ignore if already altered
+            }
         } catch (Exception e) {
             logger.error("[DATABASE] Error executing schema creation: " + e.getMessage(), e);
         }
     }
 
-    public void saveMessage(String sender, String text, String room) {
+    public int saveMessage(String sender, String text, String room) {
         if (dataSource == null) {
             logger.error("[DATABASE] Cannot save message: DataSource is not initialized.");
-            return;
+            return -1;
         }
-        String sql = "INSERT INTO messages (sender, message_text, room) VALUES (?, ?, ?)";
+        String sql = "INSERT INTO messages (sender, message_text, room) VALUES (?, ?, ?) RETURNING id";
         try (Connection conn = dataSource.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, sender);
             pstmt.setString(2, text);
             pstmt.setString(3, room);
-            pstmt.executeUpdate();
-            logger.info("[DATABASE] Successfully stored message from {} in room: {}", sender, room);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    int id = rs.getInt("id");
+                    logger.info("[DATABASE] Successfully stored message with ID {} from {} in room: {}", id, sender, room);
+                    return id;
+                }
+            }
         } catch (Exception e) {
             logger.error("[DATABASE] Failed to write message to DB: " + e.getMessage(), e);
         }
+        return -1;
     }
 
     public void registerGoogleUser(String email) {
@@ -145,6 +170,78 @@ public class DatabaseManager {
         }
     }
 
+    public void addReaction(int messageId, String username, String emoji) {
+        if (dataSource == null) {
+            logger.error("[DATABASE] Cannot add reaction: DataSource is not initialized.");
+            return;
+        }
+        String sql = "INSERT INTO message_reactions (message_id, username, emoji) VALUES (?, ?, ?) ON CONFLICT (message_id, username, emoji) DO NOTHING";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, messageId);
+            pstmt.setString(2, username);
+            pstmt.setString(3, emoji);
+            pstmt.executeUpdate();
+            logger.info("[DATABASE] Added reaction {} to message {} by {}", emoji, messageId, username);
+        } catch (Exception e) {
+            logger.error("[DATABASE] Failed to add reaction: " + e.getMessage(), e);
+        }
+    }
+
+    public void removeReaction(int messageId, String username, String emoji) {
+        if (dataSource == null) {
+            logger.error("[DATABASE] Cannot remove reaction: DataSource is not initialized.");
+            return;
+        }
+        String sql = "DELETE FROM message_reactions WHERE message_id = ? AND username = ? AND emoji = ?";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, messageId);
+            pstmt.setString(2, username);
+            pstmt.setString(3, emoji);
+            pstmt.executeUpdate();
+            logger.info("[DATABASE] Removed reaction {} from message {} by {}", emoji, messageId, username);
+        } catch (Exception e) {
+            logger.error("[DATABASE] Failed to remove reaction: " + e.getMessage(), e);
+        }
+    }
+
+    public java.util.Map<Integer, List<Message.Reaction>> getReactionsForMessages(List<Integer> messageIds) {
+        java.util.Map<Integer, List<Message.Reaction>> result = new java.util.HashMap<>();
+        if (dataSource == null || messageIds == null || messageIds.isEmpty()) {
+            return result;
+        }
+
+        StringBuilder sqlBuilder = new StringBuilder("SELECT message_id, username, emoji FROM message_reactions WHERE message_id IN (");
+        for (int i = 0; i < messageIds.size(); i++) {
+            sqlBuilder.append("?");
+            if (i < messageIds.size() - 1) {
+                sqlBuilder.append(",");
+            }
+        }
+        sqlBuilder.append(")");
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sqlBuilder.toString())) {
+            for (int i = 0; i < messageIds.size(); i++) {
+                pstmt.setInt(i + 1, messageIds.get(i));
+            }
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    int messageId = rs.getInt("message_id");
+                    String username = rs.getString("username");
+                    String emoji = rs.getString("emoji");
+                    
+                    result.computeIfAbsent(messageId, k -> new ArrayList<>())
+                          .add(new Message.Reaction(emoji, username));
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[DATABASE] Error fetching reactions for messages: " + e.getMessage(), e);
+        }
+        return result;
+    }
+
     public List<Message> getRecentMessages(String room, int limit) {
         List<Message> messagesList = new ArrayList<>();
         if (dataSource == null) {
@@ -152,31 +249,105 @@ public class DatabaseManager {
             return messagesList;
         }
         
-        // Fetch the last N messages ordered by created_at DESC (and ID DESC)
-        // and return them ordered by created_at ASC (and ID ASC)
-        String sql = "SELECT sender, message_text, created_at FROM (" +
-                "  SELECT sender, message_text, created_at, id FROM messages " +
+        String sql = "SELECT id, sender, message_text, created_at, edited_at, deleted FROM (" +
+                "  SELECT id, sender, message_text, created_at, edited_at, deleted FROM messages " +
                 "  WHERE room = ? " +
                 "  ORDER BY created_at DESC, id DESC LIMIT ?" +
                 ") sub ORDER BY created_at ASC, id ASC";
 
+        List<Integer> ids = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, room);
             pstmt.setInt(2, limit);
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
+                    int id = rs.getInt("id");
                     String sender = rs.getString("sender");
-                    String text = rs.getString("message_text");
+                    boolean deletedVal = rs.getBoolean("deleted");
+                    String text = deletedVal ? "" : rs.getString("message_text");
                     java.sql.Timestamp ts = rs.getTimestamp("created_at");
                     String timestampStr = ts != null ? ts.toInstant().toString() : Instant.now().toString();
-                    messagesList.add(new Message(sender, text, timestampStr, Message.Type.CHAT));
+                    
+                    java.sql.Timestamp editedTs = rs.getTimestamp("edited_at");
+                    String editedAtStr = editedTs != null ? editedTs.toInstant().toString() : null;
+                    
+                    Message msg = new Message(sender, text, timestampStr, Message.Type.CHAT);
+                    msg.setId(id);
+                    msg.setEditedAt(editedAtStr);
+                    msg.setDeleted(deletedVal);
+                    messagesList.add(msg);
+                    ids.add(id);
                 }
             }
         } catch (Exception e) {
             logger.error("[DATABASE] Error executing history query: " + e.getMessage(), e);
         }
+
+        if (!ids.isEmpty()) {
+            java.util.Map<Integer, List<Message.Reaction>> reactionsMap = getReactionsForMessages(ids);
+            for (Message msg : messagesList) {
+                if (reactionsMap.containsKey(msg.getId())) {
+                    msg.setReactions(reactionsMap.get(msg.getId()));
+                }
+            }
+        }
         return messagesList;
+    }
+
+    public boolean updateMessage(int messageId, String newText) {
+        if (dataSource == null) {
+            logger.error("[DATABASE] Cannot update message: DataSource is not initialized.");
+            return false;
+        }
+        String sql = "UPDATE messages SET message_text = ?, edited_at = CURRENT_TIMESTAMP WHERE id = ?";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, newText);
+            pstmt.setInt(2, messageId);
+            int affected = pstmt.executeUpdate();
+            return affected > 0;
+        } catch (Exception e) {
+            logger.error("[DATABASE] Error updating message: " + e.getMessage(), e);
+        }
+        return false;
+    }
+
+    public boolean deleteMessage(int messageId) {
+        if (dataSource == null) {
+            logger.error("[DATABASE] Cannot delete message: DataSource is not initialized.");
+            return false;
+        }
+        String sql = "UPDATE messages SET deleted = TRUE WHERE id = ?";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, messageId);
+            int affected = pstmt.executeUpdate();
+            return affected > 0;
+        } catch (Exception e) {
+            logger.error("[DATABASE] Error soft-deleting message: " + e.getMessage(), e);
+        }
+        return false;
+    }
+
+    public String getMessageOwner(int messageId) {
+        if (dataSource == null) {
+            logger.error("[DATABASE] Cannot get message owner: DataSource is not initialized.");
+            return null;
+        }
+        String sql = "SELECT sender FROM messages WHERE id = ?";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, messageId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("sender");
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[DATABASE] Error getting message owner: " + e.getMessage(), e);
+        }
+        return null;
     }
 
     public void close() {

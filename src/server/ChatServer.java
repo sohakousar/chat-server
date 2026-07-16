@@ -10,6 +10,7 @@ import java.net.InetSocketAddress;
 
 public class ChatServer extends WebSocketServer {
     private static final Logger logger = LoggerFactory.getLogger(ChatServer.class);
+    public static final String ADMIN_EMAIL = "syeda.soha.kousar@gmail.com";
 
     private final ClientRegistry registry;
     private final DatabaseManager dbManager;
@@ -56,7 +57,9 @@ public class ChatServer extends WebSocketServer {
                 logger.error("Received message but client handler was missing.");
             }
         } catch (Exception e) {
-            String remoteAddr = (conn != null && conn.getRemoteSocketAddress() != null) ? conn.getRemoteSocketAddress().toString() : "unknown";
+            String remoteAddr = (conn != null && conn.getRemoteSocketAddress() != null)
+                    ? conn.getRemoteSocketAddress().toString()
+                    : "unknown";
             logger.error("Error processing message from connection: " + remoteAddr, e);
         }
     }
@@ -66,8 +69,8 @@ public class ChatServer extends WebSocketServer {
         try {
             logger.info("[DISCONNECT] Connection closed: {} reason: {}", conn.getRemoteSocketAddress(), reason);
             logger.info("WebSocket connection closed for: {} (Code: {}, Reason: {}, Remote: {})",
-                (conn != null ? conn.getRemoteSocketAddress() : "unknown"), code, reason, remote);
-            
+                    (conn != null ? conn.getRemoteSocketAddress() : "unknown"), code, reason, remote);
+
             if (conn != null) {
                 ClientHandler handler = conn.getAttachment();
                 if (handler != null) {
@@ -83,10 +86,10 @@ public class ChatServer extends WebSocketServer {
     public void onError(WebSocket conn, Exception ex) {
         try {
             logger.info("[ERROR] {}", ex.getMessage());
-            logger.error("Exception occurred on connection: " 
-                + (conn != null ? conn.getRemoteSocketAddress() : "Server-wide error") 
-                + " -> " + ex.getMessage(), ex);
-            
+            logger.error("Exception occurred on connection: "
+                    + (conn != null ? conn.getRemoteSocketAddress() : "Server-wide error")
+                    + " -> " + ex.getMessage(), ex);
+
             if (conn != null) {
                 try {
                     ClientHandler handler = conn.getAttachment();
@@ -108,7 +111,7 @@ public class ChatServer extends WebSocketServer {
     public static void main(String[] args) {
         int port = 8887;
         ChatServer server = new ChatServer(port);
-        
+
         // Register shutdown hook for clean termination
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             logger.info("Shutting down WebSocket server...");
