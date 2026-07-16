@@ -1,5 +1,5 @@
 // Configuration and State
-const SERVER_URL = 'ws://localhost:8887';
+const SERVER_URL = 'wss://chat-server-fuj7.onrender.com';
 let socket = null;
 let myUsername = '';
 let myEmail = '';
@@ -572,7 +572,7 @@ function handleKickedMessage(reason) {
     chatApp.classList.remove('hidden');
     loginOverlay.classList.add('hidden');
     roomOverlay.classList.add('hidden');
-    
+
     document.getElementById('kicked-ok-btn').addEventListener('click', () => {
         window.location.reload();
     });
@@ -700,47 +700,47 @@ function enterEditMode(wrapper, messageId) {
     const bubble = wrapper.querySelector('.message-bubble');
     const textSpan = bubble.querySelector('.message-text');
     const actions = bubble.querySelector('.message-actions');
-    
+
     if (bubble.querySelector('.edit-input-container')) return;
-    
+
     const originalText = textSpan.innerText;
     textSpan.classList.add('hidden');
     if (actions) actions.classList.add('hidden');
-    
+
     const editContainer = document.createElement('div');
     editContainer.className = 'edit-input-container';
-    
+
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'message-edit-input';
     input.value = originalText;
-    
+
     const buttonsDiv = document.createElement('div');
     buttonsDiv.className = 'edit-input-container-buttons';
-    
+
     const saveBtn = document.createElement('button');
     saveBtn.className = 'edit-save-btn';
     saveBtn.textContent = 'Save';
-    
+
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'edit-cancel-btn';
     cancelBtn.textContent = 'Cancel';
-    
+
     buttonsDiv.appendChild(saveBtn);
     buttonsDiv.appendChild(cancelBtn);
     editContainer.appendChild(input);
     editContainer.appendChild(buttonsDiv);
     bubble.appendChild(editContainer);
-    
+
     input.focus();
     input.select();
-    
+
     const exitEdit = () => {
         editContainer.remove();
         textSpan.classList.remove('hidden');
         if (actions) actions.classList.remove('hidden');
     };
-    
+
     const saveEdit = () => {
         const newText = input.value.trim();
         if (newText !== '' && newText !== originalText) {
@@ -766,7 +766,7 @@ function enterEditMode(wrapper, messageId) {
         }
         exitEdit();
     };
-    
+
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
@@ -776,12 +776,12 @@ function enterEditMode(wrapper, messageId) {
             exitEdit();
         }
     });
-    
+
     saveBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         saveEdit();
     });
-    
+
     cancelBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         exitEdit();
@@ -791,36 +791,36 @@ function enterEditMode(wrapper, messageId) {
 function enterDeleteMode(wrapper, messageId) {
     const bubble = wrapper.querySelector('.message-bubble');
     const actions = bubble.querySelector('.message-actions');
-    
+
     if (bubble.querySelector('.delete-confirm-container')) return;
-    
+
     if (actions) actions.classList.add('hidden');
-    
+
     const confirmContainer = document.createElement('div');
     confirmContainer.className = 'delete-confirm-container';
-    
+
     const label = document.createElement('span');
     label.className = 'delete-confirm-label';
     label.textContent = 'Delete this message? ';
-    
+
     const yesBtn = document.createElement('button');
     yesBtn.className = 'delete-confirm-yes';
     yesBtn.textContent = 'Yes';
-    
+
     const noBtn = document.createElement('button');
     noBtn.className = 'delete-confirm-no';
     noBtn.textContent = 'No';
-    
+
     confirmContainer.appendChild(label);
     confirmContainer.appendChild(yesBtn);
     confirmContainer.appendChild(noBtn);
     bubble.appendChild(confirmContainer);
-    
+
     const exitDelete = () => {
         confirmContainer.remove();
         if (actions) actions.classList.remove('hidden');
     };
-    
+
     yesBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         console.log("Delete confirmed (Yes clicked) for message: " + messageId);
@@ -843,7 +843,7 @@ function enterDeleteMode(wrapper, messageId) {
         }
         exitDelete();
     });
-    
+
     noBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         console.log("Delete cancelled (No clicked) for message: " + messageId);
